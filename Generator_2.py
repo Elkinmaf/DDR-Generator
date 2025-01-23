@@ -142,42 +142,112 @@ class DDRSongGenerator:
         print(f"Generando secuencia para dificultad: {difficulty}")
         beat_info = self._analyze_beat_strength()
         
-        difficulty_settings = {
-            'beginner': {
-                'max_steps_per_beat': 1,
-                'strength_threshold': 0.7,
-                'bass_threshold': 0.6
-            },
-            'easy': {
-                'max_steps_per_beat': 1,
-                'strength_threshold': 0.6,
-                'bass_threshold': 0.5
-            },
-            'normal': {
-                'max_steps_per_beat': 2,
-                'strength_threshold': 0.5,
-                'bass_threshold': 0.4
-            },
-            'hard': {
-                'max_steps_per_beat': 3,
-                'strength_threshold': 0.4,
-                'bass_threshold': 0.3
+        if difficulty.lower()== 'beginner':
+            # Configuración específica para Beginner
+            self.steps = [] # Reiniciar pasos
+
+            # Agregamos 2 medidas vacías al inicio
+            for _ in range(8): # 2 medidas = 8 beats
+                self.steps.append(DanceStep(
+                    direction='none',
+                    timing=0,
+                    duration=0.5,
+                    beat_strength=0
+                ))
+
+            # Luego, generar pasos espaciales
+            current_beat = 8 # Empezar después de las medidas vacías
+            basic_directions = ['left', 'down', 'up', 'right']
+            last_direction = None
+
+            while current_beat < len(beat_info):
+                # Decidir si esta sección tendrá un paso o será vacía
+                if current_beat % 16 == 0: # Cada 4 medidas
+                    # Añadir una medida vacía para descanso
+                    for _ in range(4):
+                        self.steps.append(DanceStep(
+                            direction='none',
+                            timing=current_beat,
+                            duration=0.5,
+                            beat_strength=0
+                        ))
+                    current_beat += 4
+                    continue
+
+                # Un paso seguido de 3 beats vacíos
+
+                available_directions = [d for d in basic_directions if d != last_direction]
+                direction = random.choice(available_directions)
+                last_direction = direction
+
+                # 10% of probability of hold note
+                if random.random() < 0.1:
+                    self.steps.append(DanceStep(
+                        direction=f"hold_{direction}",
+                        timing=current_beat,
+                        duration=2.0,
+                        beat_strength=1.0
+                    ))
+                    for _ in range(6): # 6 empty beats after hold
+                        self.steps.append(DanceStep(
+                            direction='none',
+                            timing=current_beat +2,
+                            duration=0.5,
+                            beat_strength=0
+                        ))
+                       
+                    current_beat += 8
+
+                else:
+                    #Normal step
+                    self.steps.append(DanceStep(
+                            direction=direction,
+                            timing=current_beat,
+                            duration=0.5,
+                            beat_strength=0.5
+                        ))
+
+                    # 3 empty beats after step   
+                    for _ in range(3):
+                        self.steps.append(DanceStep(
+                            direction='none',
+                            timing=current_beat +1,
+                            duration=0.5,
+                            beat_strength=0
+                        ))
+                    current_beat += 4
+        else:
+            difficulty_settings = {
+                'easy': {
+                    'max_steps_per_beat': 1,
+                    'strength_threshold': 0.6,
+                    'bass_threshold': 0.5
+                },
+                'normal': {
+                    'max_steps_per_beat': 2,
+                    'strength_threshold': 0.5,
+                    'bass_threshold': 0.4
+                },
+                'hard': {
+                    'max_steps_per_beat': 3,
+                    'strength_threshold': 0.4,
+                    'bass_threshold': 0.3
+                }
             }
-        }
         
-        settings = difficulty_settings.get(difficulty.lower(), difficulty_settings['normal'])
-        patterns = self.patterns.get(difficulty.lower(), self.patterns['normal'])
+            settings = difficulty_settings.get(difficulty.lower(), difficulty_settings['normal'])
+            patterns = self.patterns.get(difficulty.lower(), self.patterns['normal'])
         
-        self.steps = []  # Reiniciar pasos
+            self.steps = []  # Reiniciar pasos
         
         # Generar pasos basados en el análisis
-        for i, beat in enumerate(beat_info):
-            strength = beat['strength']
-            bass_strong = beat['bass_strength'] > settings['bass_threshold']
+            for i, beat in enumerate(beat_info):
+                strength = beat['strength']
+                bass_strong = beat['bass_strength'] > settings['bass_threshold']
             
-            if strength > settings['strength_threshold'] or bass_strong:
+                if strength > settings['strength_threshold'] or bass_strong:
                 # Seleccionar un patrón
-                pattern = random.choice(patterns)
+                    pattern = random.choice(patterns)
                 
                 # Calcular duración
                 if i < len(self.beat_times) - 1:
@@ -199,6 +269,21 @@ class DDRSongGenerator:
         
         return self.steps
 
+    def _get_sm_direction(self, direction: str) -> str:
+        """Convierte una dirección a formato SM"""
+        direction_map = {
+            'left': '1000',
+            'down': '0100',
+            'up': '0010',
+            'right': '0001',
+            'none': '0000',
+            'hold_left': '2000',
+            'hold_down': '0200',
+            'hold_up': '0020',
+            'hold_right': '0002'
+        }
+        return direction_map.get(direction, '0000')
+    
     def create_stepmania_files(self, song_title: str, difficulty: str = 'normal') -> str:
         """
         Crea todos los archivos necesarios en la carpeta de StepMania.
