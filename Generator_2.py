@@ -90,26 +90,37 @@ class DDRSongGenerator:
 
     def _analyze_beat_strength(self) -> List[Dict[str, float]]:
         """
-        Analiza las características musicales de cada beat.
-        
-        :return: Lista de diccionarios con información de cada beat
+        Analiza las características musicales de cada beat con mayor precisión.
         """
         print("Analizando intensidad de beats...")
         beat_info = []
         
         # Analizar el espectro completo
-        spec = librosa.feature.melspectrogram(y=self.y, sr=self.sr)
+        hop_length = 512
         
-        # Detectar onsets con más detalle
+        spec = librosa.feature.melspectrogram(
+            y=self.y, 
+            sr=self.sr,
+            n_mels=128,
+            hop_length=hop_length
+        )
+        
+        # Detectar ritmo con más detalle
         onset_env = librosa.onset.onset_strength(
             y=self.y, 
             sr=self.sr,
-            hop_length=512,
+            hop_length=hop_length,
             aggregate=np.median
         )
-        
+
+        spectral_contrast = librosa.feature.spectral_contrast(
+            y=self.y,
+            sr=self.sr,
+            hop_length=hop_length
+        )
+
         for beat_time in self.beat_times:
-            frame = librosa.time_to_frames(beat_time, sr=self.sr)
+            frame = librosa.time_to_frames(beat_time, sr=self.sr, hop_length=hop_length)
             if frame < len(onset_env):
                 # Características básicas
                 strength = onset_env[frame]
@@ -117,105 +128,125 @@ class DDRSongGenerator:
                 # Analizar bandas de frecuencia
                 if frame < spec.shape[1]:
                     spec_beat = spec[:, frame]
-                    bass_strength = np.mean(spec_beat[:10])  # Frecuencias bajas
-                    mid_strength = np.mean(spec_beat[10:30])  # Frecuencias medias
-                    high_strength = np.mean(spec_beat[30:])  # Frecuencias altas
+                    bass_strength = np.mean(spec_beat[:20])  # Frecuencias bajas
+                    mid_strength = np.mean(spec_beat[20:80])  # Frecuencias medias
+                    high_strength = np.mean(spec_beat[80:])  # Frecuencias altas
                 else:
                     bass_strength = mid_strength = high_strength = 0.0
                 
+                contrast = np.mean(spectral_contrast[:, frame])
+
                 beat_info.append({
                     'strength': float(strength),
                     'bass_strength': float(bass_strength),
                     'mid_strength': float(mid_strength),
-                    'high_strength': float(high_strength)
+                    'high_strength': float(high_strength),
+                    'contrast': float(contrast),
+                    'time':float(beat_time)
                 })
         
         return beat_info
 
     def generate_sequence(self, difficulty: str = 'normal') -> List[DanceStep]:
-        """
-        Genera la secuencia de pasos basada en el análisis musical.
-        
-        :param difficulty: Nivel de dificultad de los pasos
-        :return: Lista de pasos de baile generados
-        """
+
+        if self.tempo is None or (hasattr(self.tempo, 'size') and self.tempo.size == 0):
+            
+            default_tempo = 120.0
+            print(f"No se pudo detectar el tempo. Usando valor predeterminado: {default_tempo} BPM")
+            beats_per_second = default_tempo / 60
+        else:
+            beats_per_second = float(self.tempo[0] if hasattr(self.tempo, 'item') else self.tempo) / 60
+
+
+
+
+
+        song_duration = librosa.get_duration(y=self.y, sr=self.sr)
+        beats_per_second = float(self.tempo[0] if hasattr(self.tempo, 'item') else self.tempo) / 60
+
+        total_beats = int(song_duration * beats_per_second)
+
+        print(f"Tempo detectado: {beats_per_second * 60:.1f} BPM")
+        print(f"Duración de la canción: {song_duration:.1f} segundos")
+        print(f"Total de beats: {total_beats}")
+
         print(f"Generando secuencia para dificultad: {difficulty}")
         beat_info = self._analyze_beat_strength()
-        
-        if difficulty.lower()== 'beginner':
-            # Configuración específica para Beginner
-            self.steps = [] # Reiniciar pasos
 
-            # Agregamos 2 medidas vacías al inicio
-            for _ in range(8): # 2 medidas = 8 beats
+        if difficulty.lower() == 'beginner':
+            self.steps = []
+            current_beat = 0
+
+            for _ in range(8):
                 self.steps.append(DanceStep(
                     direction='none',
-                    timing=0,
+                    timing=current_beat,
                     duration=0.5,
                     beat_strength=0
                 ))
+                current_beat +=1
 
-            # Luego, generar pasos espaciales
-            current_beat = 8 # Empezar después de las medidas vacías
             basic_directions = ['left', 'down', 'up', 'right']
             last_direction = None
 
-            while current_beat < len(beat_info):
-                # Decidir si esta sección tendrá un paso o será vacía
-                if current_beat % 16 == 0: # Cada 4 medidas
-                    # Añadir una medida vacía para descanso
-                    for _ in range(4):
-                        self.steps.append(DanceStep(
-                            direction='none',
-                            timing=current_beat,
-                            duration=0.5,
-                            beat_strength=0
-                        ))
-                    current_beat += 4
-                    continue
+        # Assure to generate enough beats
+        while current_beat < total_beats:
 
-                # Un paso seguido de 3 beats vacíos
-
-                available_directions = [d for d in basic_directions if d != last_direction]
-                direction = random.choice(available_directions)
-                last_direction = direction
-
-                # 10% of probability of hold note
-                if random.random() < 0.1:
+            if current_beat % 16 == 0:
+                for _ in range(4):
                     self.steps.append(DanceStep(
-                        direction=f"hold_{direction}",
+                        direction='none',
                         timing=current_beat,
-                        duration=2.0,
-                        beat_strength=1.0
+                        duration=0.5,
+                        beat_strength=0
                     ))
-                    for _ in range(6): # 6 empty beats after hold
-                        self.steps.append(DanceStep(
-                            direction='none',
-                            timing=current_beat +2,
-                            duration=0.5,
-                            beat_strength=0
-                        ))
-                       
-                    current_beat += 8
+                    current_beat +=1
+                continue
 
-                else:
-                    #Normal step
+            available_directions = [d for d in basic_directions if d != last_direction]
+            direction = random.choice(available_directions)
+            last_direction = direction
+
+
+            # 10% of probability of hold note
+            if random.random() < 0.1:
+                self.steps.append(DanceStep(
+                    direction=f"hold_{direction}",
+                    timing=current_beat,
+                    duration=2.0,
+                    beat_strength=1.0
+                ))
+                current_beat += 2
+
+                for _ in range(6): # 6 empty beats after hold
                     self.steps.append(DanceStep(
-                            direction=direction,
-                            timing=current_beat,
-                            duration=0.5,
-                            beat_strength=0.5
-                        ))
+                        direction='none',
+                        timing=current_beat,
+                        duration=0.5,
+                        beat_strength=0
+                    ))
+                       
+                    current_beat += 1
 
-                    # 3 empty beats after step   
-                    for _ in range(3):
-                        self.steps.append(DanceStep(
-                            direction='none',
-                            timing=current_beat +1,
-                            duration=0.5,
-                            beat_strength=0
-                        ))
-                    current_beat += 4
+            else:
+                    #Normal step
+                self.steps.append(DanceStep(
+                    direction=direction,
+                    timing=current_beat,
+                    duration=0.5,
+                    beat_strength=0.5
+                ))
+                current_beat += 1
+
+                # 3 empty beats after step   
+                for _ in range(3):
+                    self.steps.append(DanceStep(
+                        direction='none',
+                        timing=current_beat,
+                        duration=0.5,
+                        beat_strength=0
+                    ))
+                    current_beat += 1
         else:
             difficulty_settings = {
                 'easy': {
@@ -267,7 +298,7 @@ class DDRSongGenerator:
                     )
                     self.steps.append(step)
         
-        return self.steps
+            return self.steps
 
     def _get_sm_direction(self, direction: str) -> str:
         """Convierte una dirección a formato SM"""
@@ -328,7 +359,7 @@ class DDRSongGenerator:
         :return: Contenido del archivo .sm
         """
         # Convertir tempo a un valor escalar
-        tempo = float(self.tempo) if hasattr(self.tempo, 'item') else self.tempo
+        tempo = float(self.tempo[0] if hasattr(self.tempo, 'item') else self.tempo)
         
         song_length = librosa.get_duration(y=self.y, sr=self.sr)
         
@@ -337,7 +368,7 @@ class DDRSongGenerator:
         video_line = ""
         if self.video_path:
             video_filename = os.path.basename(self.video_path)
-            video_line = f"#BGCHANGES:bg{os.path.splitext(video_filename)[1]}=0.000=1=1=1=1;"
+            video_line = f"""#BGCHANGES:-0.000={video_filename}=1.000=1=0=1, 9999=-nosongbg-=1.000=0=0=0 // don't automatically add - songbackground-;"""
         else:
             video_line = "#BGCHANGES:;"
 
@@ -354,11 +385,11 @@ class DDRSongGenerator:
 #LYRICSPATH:;
 #CDTITLE:;
 #MUSIC:audio{os.path.splitext(audio_filename)[1]};
-#OFFSET:0.000;
-#SAMPLESTART:0.000;
-#SAMPLELENGTH:10.000;
+#OFFSET:-0.100;
+#SAMPLESTART:52.840;
+#SAMPLELENGTH:13.460;
 #SELECTABLE:YES;
-#DISPLAYBPM:*;
+#DISPLAYBPM:{tempo:.3f};
 #BPMS:0.000={tempo:.3f};
 #STOPS:;
 {video_line}\n"""
@@ -430,6 +461,47 @@ class DDRSongGenerator:
         
         return measures_str
 
+def process_background_video(self, video_path: str) -> str:     
+    """
+    Process the video to assure compatibility with Stepmania.
+
+    Args:
+        video_path: Path to the original video
+
+    Returns:
+        str: Path to the processed video
+    """
+    try:
+        import cv2
+        from moviepy.editor import VideoFileClip
+
+        # Upload the video
+        video = VideoFileClip(video_path)
+
+        # Adjust video size (640*480)
+        target_size = (640, 480)
+        processed_video = video.resize(target_size)
+
+        # Assure that the video has the same length as the music
+        song_duration = librosa.get_duration(y=self.y, sr=self.sr)
+        if video.duration > song_duration:
+            processed_video = processed_video.subclip(0, song_duration)
+
+        # Save the processed video
+        output_path = os.path.splitext(video_path)[0] + "_processed.mp4"
+        processed_video.write_videofile(
+            output_path,
+            codec='libx264',
+            audio=False,
+            fps=30
+        )
+
+        return output_path
+
+    except ImportError:
+        print("Por favor instala opencv-python y moviepy para procesar videos")
+        return video_path
+
 def main():
     """Función principal para ejecutar el generador de canciones DDR."""
     try:
@@ -438,37 +510,24 @@ def main():
         # Configuración de rutas - limpiando las comillas
         audio_path = input("\nIngresa la ruta del archivo de audio: ").strip().strip('"').strip("'")
         video_path = input("Ingresa la ruta del archivo de video (opcional, presiona Enter para omitir): ").strip().strip('"').strip("'") or None
-        stepmania_path = input("Ingresa la ruta de instalación de Stepmania (opcional, presiona Enter para búsqueda automática): ").strip().strip('"').strip("'") or None
-    
+          
         
         # Crear generador
         print("\nInicializando generador...")
-        song_generator = DDRSongGenerator(
-            audio_path=audio_path,
-            video_path=video_path,
-            stepmania_path=stepmania_path
-        )
-        
-        # Configuración de la canción
-        song_title = input("\nIngresa el título de la canción: ")
-        print("\nDificultades disponibles: beginner, easy, normal, hard, all (para generar todas)")
-        difficulty = input("Selecciona la dificultad (default: normal): ").strip() or "normal"
+        generator = DDRSongGenerator(audio_path, video_path)
         
         # Generar archivos
         print("\nGenerando archivos...")
-        output_dir = song_generator.create_stepmania_files(song_title, difficulty)
+        song_title = input("\nTítulo de la canción: ")
+        difficulty = input("Dificultad (beginner/easy/normal/hard/all): ") or "normal"
         
-        print("\n¡Archivos generados exitosamente!")
-        print(f"Los archivos se han guardado en: {output_dir}")
-        print("\nPara jugar:")
-        print("1. Inicia Stepmania")
-        print("2. La canción aparecerá en el menú de selección")
-        print(f"3. Selecciona la dificultad deseada")
+        output_dir = generator.create_stepmania_files(song_title, difficulty)
         
+        print(f"\nArchivos generados en: {output_dir}")
+
     except Exception as e:
         print(f"\nError: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        traceback.print_exc()
     
     input("\nPresiona Enter para salir...")
 
